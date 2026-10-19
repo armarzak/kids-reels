@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Видео">
+  <rect width="512" height="512" rx="110" fill="#17161d"/>
+  <circle cx="256" cy="256" r="150" fill="#7c6cff"/>
+  <path d="M212 180 L356 256 L212 332 Z" fill="#ffffff"/>
+</svg>

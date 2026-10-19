@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Видео">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<meta name="robots" content="noindex, nofollow">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Видео для дочки</title>
+<style>
+  :root {
+    --bg: #000;
+    --panel: #16161a;
+    --panel-2: #222228;
+    --text: #f4f4f6;
+    --muted: #9a9aa6;
+    --accent: #7c6cff;
+    --danger: #ff5a6a;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+
+  /* ---------- Лента ---------- */
+  #feed {
+    position: fixed; inset: 0;
+    overflow-y: scroll;
+    scroll-snap-type: y mandatory;
+    scrollbar-width: none;
+  }
+  #feed::-webkit-scrollbar { display: none; }
+  .slide {
+    height: 100dvh; width: 100%;
+    scroll-snap-align: start; scroll-snap-stop: always;
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+  }
+  .slide iframe {
+    border: 0; background: #fff;
+    width: min(100vw, 540px);
+    height: 100%;
+    border-radius: 0;
+  }
+  @media (min-width: 600px) {
+    .slide iframe { height: calc(100% - 32px); border-radius: var(--radius); }
+  }
+  .loader {
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 3px solid #333; border-top-color: #fff;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .counter {
+    position: absolute; left: 14px; bottom: calc(14px + env(safe-area-inset-bottom));
+    font-size: 12px; color: #fff; opacity: .55;
+    background: rgba(0,0,0,.45); padding: 4px 8px; border-radius: 99px;
+    pointer-events: none;
+  }
+
+  #empty {
+    position: fixed; inset: 0; display: none;
+    flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    text-align: center; padding: 24px;
+  }
+  #empty .big { font-size: 56px; }
+  #empty .title { font-size: 20px; }
+  #empty .sub { color: var(--muted); font-size: 14px; }
+
+  /* Плашка «есть новые видео» */
+  #newBanner {
+    position: fixed; z-index: 6;
+    top: calc(12px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+    font: inherit; font-size: 14px; font-weight: 600;
+    border: 0; border-radius: 99px; padding: 10px 18px;
+    background: var(--accent); color: #fff;
+    box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  }
+  #newBanner[hidden] { display: none; }
+
+  /* Шестерёнка родителя: удерживать 1,5 с */
+  #gear {
+    position: fixed; z-index: 5;
+    top: calc(10px + env(safe-area-inset-top)); right: 10px;
+    width: 44px; height: 44px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.35); color: rgba(255,255,255,.35);
+    border: 0; font-size: 22px;
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    touch-action: none;
+  }
+  #gear svg { width: 22px; height: 22px; }
+  #gear .ring {
+    position: absolute; inset: 0; border-radius: 50%;
+    background: conic-gradient(rgba(255,255,255,.7) var(--p, 0%), transparent 0);
+    -webkit-mask: radial-gradient(circle, transparent 18px, #000 19px);
+            mask: radial-gradient(circle, transparent 18px, #000 19px);
+  }
+
+  /* ---------- Окна ---------- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 10;
+    background: rgba(0,0,0,.7);
+    display: none; align-items: flex-end; justify-content: center;
+  }
+  .overlay.open { display: flex; }
+  @media (min-width: 600px) { .overlay { align-items: center; } }
+  .sheet {
+    background: var(--panel); width: 100%; max-width: 560px;
+    max-height: 92dvh; overflow-y: auto;
+    border-radius: 20px 20px 0 0;
+    padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  }
+  @media (min-width: 600px) { .sheet { border-radius: 20px; } }
+  .sheet h2 { margin: 0 0 14px; font-size: 20px; display: flex; justify-content: space-between; align-items: center; }
+  .sheet h3 { margin: 22px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+  .hint { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 8px 0 0; }
+  .hint a { color: var(--accent); }
+  .hint ol { margin: 6px 0 8px; padding-left: 20px; }
+  .hint li { margin: 3px 0; }
+  .msg { font-size: 14px; margin-top: 8px; min-height: 1em; }
+  .msg.err { color: var(--danger); }
+
+  input, textarea {
+    width: 100%; font: inherit; font-size: 16px; color: var(--text);
+    background: var(--panel-2); border: 1px solid #333; border-radius: 10px;
+    padding: 12px;
+  }
+  textarea { resize: vertical; min-height: 80px; }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); border-color: transparent; }
+
+  .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  button.btn {
+    font: inherit; font-size: 15px; border: 0; border-radius: 10px;
+    padding: 11px 16px; cursor: pointer;
+    background: var(--panel-2); color: var(--text);
+  }
+  button.btn.primary { background: var(--accent); color: #fff; }
+  button.btn.danger { color: var(--danger); }
+  button.btn:disabled { opacity: .4; }
+  button.x { background: none; border: 0; color: var(--muted); font-size: 15px; cursor: pointer; padding: 6px; }
+  a.btn {
+    font: inherit; font-size: 15px; border-radius: 10px; padding: 11px 16px;
+    background: var(--panel-2); color: var(--text); text-decoration: none; display: inline-block;
+  }
+
+  .list { list-style: none; margin: 0; padding: 0; }
+  .item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px; border-radius: 10px; background: var(--panel-2);
+    margin-bottom: 6px;
+  }
+  .item .meta { flex: 1; min-width: 0; }
+  .item .kind { font-size: 15px; }
+  .item .code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .tag {
+    font-size: 11px; padding: 2px 7px; border-radius: 99px; flex: none;
+    background: #34343e; color: var(--muted);
+  }
+  .item .tag.new { background: rgba(124,108,255,.22); color: #b9b0ff; }
+  .item button {
+    border: 0; background: #2e2e36; color: var(--text);
+    width: 36px; height: 36px; border-radius: 8px; font-size: 16px; cursor: pointer;
+    flex: none;
+  }
+  .item button.del { color: var(--danger); }
+  .item button:disabled { opacity: .3; }
+
+  #previewFrame { width: 100%; height: 70dvh; border: 0; border-radius: 10px; background: #fff; }
+  #jsonOut { font-family: ui-monospace, Menlo, monospace; font-size: 12px; min-height: 120px; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<div id="feed" aria-label="Лента видео"></div>
+
+<div id="empty">
+  <div class="big">🎬</div>
+  <div class="title">Пока нет видео</div>
+  <div class="sub">Попроси папу добавить</div>
+</div>
+
+<button id="newBanner" hidden>Новые видео — обновить</button>
+
+<button id="gear" aria-label="Для родителей (удерживать)">
+  <span class="ring"></span>
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L4.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1l.4 2.6h4l.4-2.6c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
+</button>
+
+<!-- PIN -->
+<div class="overlay" id="pinOverlay">
+  <div class="sheet" style="max-width:380px">
+    <h2><span id="pinTitle">Введите PIN</span><button class="x" data-close>Отмена</button></h2>
+    <input id="pinInput" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">
+    <div class="msg err" id="pinMsg"></div>
+    <div class="row"><button class="btn primary" id="pinOk">Войти</button></div>
+  </div>
+</div>
+
+<!-- Режим родителя -->
+<div class="overlay" id="parentOverlay">
+  <div class="sheet">
+    <h2>Для родителей <button class="x" data-close>Готово</button></h2>
+
+    <h3>Добавить видео</h3>
+    <textarea id="linkInput" placeholder="Вставьте ссылку на пост или Reels (можно несколько)" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+    <div class="row">
+      <button class="btn primary" id="addBtn">Добавить</button>
+      <button class="btn" id="pasteBtn">Вставить из буфера</button>
+    </div>
+    <div class="msg" id="addMsg"></div>
+    <p class="hint">В Instagram: «Поделиться» или ⋯ → «Копировать ссылку». Добавленное сразу видно на этом устройстве. Чтобы видео увидела дочка — сохраните список на GitHub (ниже).</p>
+
+    <h3 id="listTitle">Видео</h3>
+    <ul class="list" id="list"></ul>
+    <div class="row">
+      <button class="btn" id="reloadBtn">Обновить с GitHub</button>
+    </div>
+    <div class="msg" id="syncMsg"></div>
+
+    <h3>Сохранить для дочки</h3>
+    <div class="row">
+      <button class="btn primary" id="copyJsonBtn">Скопировать список</button>
+      <a class="btn" id="githubLink" target="_blank" rel="noopener">Открыть videos.json ↗</a>
+    </div>
+    <textarea id="jsonOut" readonly placeholder="Здесь появится список для вставки"></textarea>
+    <div class="hint">
+      <ol>
+        <li>«Скопировать список».</li>
+        <li>«Открыть videos.json ↗» → карандаш (Edit).</li>
+        <li>Выделить всё в файле и вставить скопированное.</li>
+        <li>Зелёная кнопка Commit changes.</li>
+      </ol>
+      Через минуту нажмите «Обновить с GitHub» — видео станут общими, и телефон дочки их подхватит.
+    </div>
+
+    <h3>Безопасность</h3>
+    <div class="row"><button class="btn danger" id="resetPinBtn">Сменить PIN</button></div>
+  </div>
+</div>
+
+<!-- Проверка видео -->
+<div class="overlay" id="previewOverlay">
+  <div class="sheet">
+    <h2>Проверка видео <button class="x" data-close>Закрыть</button></h2>
+    <iframe id="previewFrame" title="Проверка видео"
+      sandbox="allow-scripts allow-same-origin allow-presentation"
+      allow="autoplay; encrypted-media; fullscreen; picture-in-picture"></iframe>
+  </div>
+</div>
+
+<script>
+(() => {
+  const REMOTE_URL = 'videos.json';
+  const GITHUB_EDIT = 'https://github.com/armarzak/kids-reels/edit/main/videos.json';
+
+  const KEY_LOCAL = 'kidsreels.local.v1';
+  const KEY_CACHE = 'kidsreels.remote.v1';
+  const KEY_PIN   = 'kidsreels.pin';
+  const KEY_OLD   = 'kidsreels.videos.v1';
+
+  // ---------- Хранилище ----------
+  const storage = {
+    get(key, fallback) {
+      try { const v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); }
+      catch { return fallback; }
+    },
+    set(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+    },
+    remove(key) { try { localStorage.removeItem(key); } catch {} }
+  };
+
+  // ---------- Разбор ссылок ----------
+  const LINK_RE = /instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(p|reels?|tv)\/([A-Za-z0-9_-]+)/gi;
+  function extract(text) {
+    const out = [];
+    for (const m of String(text).matchAll(LINK_RE)) {
+      out.push({ code: m[2], reel: m[1].toLowerCase().startsWith('reel') });
+    }
+    return out;
+  }
+  const embedUrl = v => `https://www.instagram.com/${v.reel ? 'reel' : 'p'}/${v.code}/embed/`;
+  const pageUrl  = v => `https://www.instagram.com/${v.reel ? 'reel' : 'p'}/${v.code}/`;
+
+  // Запись в videos.json: ссылка строкой или объект {code, reel}
+  function normalize(x) {
+    if (typeof x === 'string') return extract(x)[0] || null;
+    if (x && typeof x.code === 'string' && /^[A-Za-z0-9_-]+$/.test(x.code)) {
+      return { code: x.code, reel: !!x.reel };
+    }
+    return null;
+  }
+  function dedupe(list) {
+    const seen = new Set(), out = [];
+    for (const v of list) { if (!v || seen.has(v.code)) continue; seen.add(v.code); out.push(v); }
+    return out;
+  }
+  const sameList = (a, b) => a.length === b.length && a.every((v, i) => v.code === b[i].code);
+
+  // ---------- Данные ----------
+  // remote — общий список из videos.json; local — добавленное на этом устройстве и ещё не сохранённое.
+  let remote = dedupe((storage.get(KEY_CACHE, []) || []).map(normalize).filter(Boolean));
+  let local  = dedupe((storage.get(KEY_LOCAL, []) || []).map(normalize).filter(Boolean));
+  let videos = [];
+  let pending = null;
+
+  // Перенос списка из прежней версии приложения
+  const old = storage.get(KEY_OLD, null);
+  if (Array.isArray(old) && old.length) {
+    local = dedupe([...old.map(normalize).filter(Boolean), ...local]);
+    storage.set(KEY_LOCAL, local);
+    storage.remove(KEY_OLD);
+  }
+
+  const saveLocal = () => storage.set(KEY_LOCAL, local);
+
+  // Локальные записи, уже попавшие в videos.json, больше не нужны
+  function pruneLocal() {
+    const before = local.length;
+    local = local.filter(l => !remote.some(r => r.code === l.code));
+    if (local.length !== before) saveLocal();
+  }
+  function rebuild() { videos = dedupe([...remote, ...local]); }
+
+  function addFrom(text) {
+    const fresh = [];
+    for (const v of extract(text)) {
+      if (videos.some(x => x.code === v.code) || fresh.some(x => x.code === v.code)) continue;
+      fresh.push(v);
+    }
+    if (fresh.length) { local = dedupe([...fresh, ...local]); saveLocal(); rebuild(); }
+    return fresh.length;
+  }
+
+  // ---------- Общий список ----------
+  async function fetchRemote() {
+    const r = await fetch(`${REMOTE_URL}?t=${Date.now()}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!Array.isArray(data)) throw new Error('ожидался список');
+    return dedupe(data.map(normalize).filter(Boolean));
+  }
+
+  function applyRemote(data) {
+    remote = data;
+    storage.set(KEY_CACHE, remote.map(pageUrl));
+    pruneLocal();
+    const prev = videos;
+    rebuild();
+    pending = null;
+    banner.hidden = true;
+    if (!sameList(prev, videos)) renderFeed();
+  }
+
+  // apply=true — показать сразу; иначе предложить плашкой, не перебивая просмотр
+  async function refreshRemote(apply) {
+    const data = await fetchRemote();
+    if (apply || !videos.length) { applyRemote(data); return true; }
+    const next = dedupe([...data, ...local.filter(l => !data.some(r => r.code === l.code))]);
+    if (sameList(next, videos)) { pending = null; banner.hidden = true; return false; }
+    pending = data;
+    banner.hidden = false;
+    return true;
+  }
+
+  // ---------- Лента ----------
+  const feed = document.getElementById('feed');
+  const empty = document.getElementById('empty');
+  const banner = document.getElementById('newBanner');
+  let observer;
+
+  function makeFrame(v) {
+    const f = document.createElement('iframe');
+    f.src = embedUrl(v);
+    f.title = 'Видео';
+    f.loading = 'eager';
+    // Без allow-top-navigation и allow-popups: из плеера нельзя уйти в Instagram.
+    f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
+    f.setAttribute('allow', 'autoplay; encrypted-media; fullscreen; picture-in-picture');
+    return f;
+  }
+
+  function activate(slide, on) {
+    const has = slide.querySelector('iframe');
+    if (on && !has) {
+      slide.querySelector('.loader')?.remove();
+      slide.prepend(makeFrame(videos[+slide.dataset.i]));
+    } else if (!on && has) {
+      has.remove(); // выгружаем — чтобы звук пролистанного видео не играл
+      const l = document.createElement('div'); l.className = 'loader';
+      slide.prepend(l);
+    }
+  }
+
+  function renderFeed() {
+    observer?.disconnect();
+    feed.innerHTML = '';
+    empty.style.display = videos.length ? 'none' : 'flex';
+    if (!videos.length) return;
+
+    videos.forEach((v, i) => {
+      const s = document.createElement('section');
+      s.className = 'slide';
+      s.dataset.i = i;
+      s.innerHTML = `<div class="loader"></div><div class="counter">${i + 1} / ${videos.length}</div>`;
+      feed.append(s);
+    });
+
+    observer = new IntersectionObserver(entries => {
+      for (const e of entries) activate(e.target, e.intersectionRatio >= 0.6);
+    }, { root: feed, threshold: [0, 0.6] });
+    feed.querySelectorAll('.slide').forEach(s => observer.observe(s));
+  }
+
+  banner.addEventListener('click', () => {
+    if (pending) applyRemote(pending);
+    banner.hidden = true;
+    feed.scrollTo({ top: 0 });
+  });
+
+  // ---------- Окна ----------
+  const overlays = {
+    pin: document.getElementById('pinOverlay'),
+    parent: document.getElementById('parentOverlay'),
+    preview: document.getElementById('previewOverlay'),
+  };
+  function open(name) { overlays[name].classList.add('open'); }
+  function close(name) {
+    overlays[name].classList.remove('open');
+    if (name === 'preview') document.getElementById('previewFrame').src = 'about:blank';
+  }
+  for (const [name, el] of Object.entries(overlays)) {
+    el.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => close(name)));
+    el.addEventListener('click', e => { if (e.target === el) close(name); });
+  }
+
+  // ---------- Шестерёнка: удерживать 1,5 с ----------
+  const gear = document.getElementById('gear');
+  const HOLD = 1500;
+  let holdStart = 0, raf = 0;
+  function tick() {
+    const p = Math.min(1, (performance.now() - holdStart) / HOLD);
+    gear.style.setProperty('--p', (p * 100) + '%');
+    if (p >= 1) { stopHold(); openPin(); return; }
+    raf = requestAnimationFrame(tick);
+  }
+  function startHold(e) { e.preventDefault(); holdStart = performance.now(); raf = requestAnimationFrame(tick); }
+  function stopHold() { cancelAnimationFrame(raf); gear.style.setProperty('--p', '0%'); }
+  gear.addEventListener('pointerdown', startHold);
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(t => gear.addEventListener(t, stopHold));
+  gear.addEventListener('contextmenu', e => e.preventDefault());
+
+  // ---------- PIN ----------
+  const pinInput = document.getElementById('pinInput');
+  const pinMsg = document.getElementById('pinMsg');
+  const pinOk = document.getElementById('pinOk');
+  const pinTitle = document.getElementById('pinTitle');
+
+  function openPin() {
+    const setup = !storage.get(KEY_PIN, '');
+    pinTitle.textContent = setup ? 'Придумайте PIN' : 'Введите PIN';
+    pinOk.textContent = setup ? 'Сохранить' : 'Войти';
+    pinMsg.textContent = '';
+    pinInput.value = '';
+    open('pin');
+    setTimeout(() => pinInput.focus(), 50);
+  }
+  function checkPin() {
+    const saved = storage.get(KEY_PIN, '');
+    const val = pinInput.value.trim();
+    if (!/^\d{4,}$/.test(val)) { pinMsg.textContent = 'Минимум 4 цифры'; return; }
+    if (!saved) storage.set(KEY_PIN, val);
+    else if (val !== saved) { pinMsg.textContent = 'Неверный PIN'; pinInput.value = ''; return; }
+    close('pin');
+    openParent();
+  }
+  pinOk.addEventListener('click', checkPin);
+  pinInput.addEventListener('keydown', e => { if (e.key === 'Enter') checkPin(); });
+
+  // ---------- Режим родителя ----------
+  const linkInput = document.getElementById('linkInput');
+  const addMsg = document.getElementById('addMsg');
+  const syncMsg = document.getElementById('syncMsg');
+  const list = document.getElementById('list');
+  const listTitle = document.getElementById('listTitle');
+  const jsonOut = document.getElementById('jsonOut');
+  document.getElementById('githubLink').href = GITHUB_EDIT;
+
+  function openParent() {
+    addMsg.textContent = ''; syncMsg.textContent = ''; jsonOut.value = '';
+    renderList(); open('parent');
+  }
+
+  const isLocal = v => local.some(x => x.code === v.code);
+
+  function renderList() {
+    listTitle.textContent = `Видео: ${videos.length}` + (local.length ? ` · не сохранено: ${local.length}` : '');
+    list.innerHTML = '';
+    if (!videos.length) {
+      list.innerHTML = '<li class="item"><div class="meta"><div class="code">список пуст</div></div></li>';
+      return;
+    }
+    videos.forEach(v => {
+      const mine = isLocal(v);
+      const i = mine ? local.findIndex(x => x.code === v.code) : -1;
+      const li = document.createElement('li');
+      li.className = 'item';
+      li.innerHTML = `
+        <div class="meta">
+          <div class="kind">${v.reel ? '🎞️ Reels' : '🖼️ Пост'}</div>
+          <div class="code">${v.code}</div>
+        </div>
+        <span class="tag ${mine ? 'new' : ''}">${mine ? 'новое' : 'общее'}</span>
+        <button title="Проверить" data-a="play">▶</button>
+        ${mine ? `
+        <button title="Выше" data-a="up" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button title="Ниже" data-a="down" ${i === local.length - 1 ? 'disabled' : ''}>↓</button>
+        <button title="Удалить" class="del" data-a="del">✕</button>` : ''}`;
+      li.addEventListener('click', e => {
+        const a = e.target.closest('button')?.dataset.a;
+        if (!a) return;
+        if (a === 'play') {
+          document.getElementById('previewFrame').src = embedUrl(v);
+          open('preview');
+          return;
+        }
+        if (a === 'up' && i > 0) [local[i - 1], local[i]] = [local[i], local[i - 1]];
+        if (a === 'down' && i < local.length - 1) [local[i + 1], local[i]] = [local[i], local[i + 1]];
+        if (a === 'del') {
+          if (!confirm('Удалить это видео?')) return;
+          local.splice(i, 1);
+        }
+        saveLocal(); rebuild(); renderList(); renderFeed();
+      });
+      list.append(li);
+    });
+  }
+
+  document.getElementById('addBtn').addEventListener('click', () => {
+    const n = addFrom(linkInput.value);
+    addMsg.classList.toggle('err', !n);
+    addMsg.textContent = n ? `Добавлено видео: ${n}` : 'Новых ссылок Instagram не найдено (или такие уже есть).';
+    if (n) { linkInput.value = ''; renderList(); renderFeed(); }
+  });
+
+  document.getElementById('pasteBtn').addEventListener('click', async () => {
+    try { linkInput.value = await navigator.clipboard.readText(); }
+    catch { addMsg.classList.add('err'); addMsg.textContent = 'Браузер не дал доступ к буферу — вставьте вручную (долгое нажатие → «Вставить»).'; }
+  });
+
+  document.getElementById('copyJsonBtn').addEventListener('click', async () => {
+    const text = JSON.stringify(videos.map(pageUrl), null, 2);
+    jsonOut.value = text;
+    try {
+      await navigator.clipboard.writeText(text);
+      syncMsg.classList.remove('err');
+      syncMsg.textContent = 'Список в буфере — вставляйте в videos.json.';
+    } catch {
+      syncMsg.classList.add('err');
+      syncMsg.textContent = 'Буфер недоступен — скопируйте текст из поля ниже вручную.';
+    }
+  });
+
+  document.getElementById('reloadBtn').addEventListener('click', async () => {
+    syncMsg.classList.remove('err');
+    syncMsg.textContent = 'Обновляю…';
+    try {
+      await refreshRemote(true);
+      renderList();
+      syncMsg.textContent = `Загружено из GitHub: ${remote.length}.` +
+        (local.length ? ` Не сохранено: ${local.length}.` : ' Всё сохранено.');
+    } catch (e) {
+      syncMsg.classList.add('err');
+      syncMsg.textContent = 'Не удалось загрузить videos.json (' + e.message + ').';
+    }
+  });
+
+  document.getElementById('resetPinBtn').addEventListener('click', () => {
+    if (!confirm('Сбросить PIN? Новый спросится при следующем входе.')) return;
+    storage.remove(KEY_PIN);
+    close('parent');
+  });
+
+  // ---------- Старт ----------
+  pruneLocal();
+  rebuild();
+  renderFeed();
+  refreshRemote(true).catch(() => {});
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshRemote(false).catch(() => {});
+  });
+})();
+</script>
+</body>
+</html>
