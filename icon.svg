@@ -1,5 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Видео">
-  <rect width="512" height="512" rx="110" fill="#17161d"/>
-  <circle cx="256" cy="256" r="150" fill="#7c6cff"/>
-  <path d="M212 180 L356 256 L212 332 Z" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Видео для дочки">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFB43D"/>
+      <stop offset=".45" stop-color="#FF4FA3"/>
+      <stop offset="1" stop-color="#7C6CFF"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="115" fill="url(#bg)"/>
+
+  <g fill="#fff" opacity=".92">
+    <path d="M104 96 l12 30 30 12 -30 12 -12 30 -12-30 -30-12 30-12z"/>
+    <path d="M430 318 l9 23 23 9 -23 9 -9 23 -9-23 -23-9 23-9z"/>
+    <circle cx="424" cy="118" r="11"/>
+    <circle cx="86" cy="392" r="14"/>
+    <circle cx="150" cy="446" r="7"/>
+  </g>
+
+  <circle cx="256" cy="258" r="132" fill="#fff"/>
+
+  <path d="M222 186 l124 72 -124 72z" fill="none" stroke="#FF4FA3" stroke-width="40"
+        stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M222 186 l124 72 -124 72z" fill="#FF4FA3"/>
 </svg>
