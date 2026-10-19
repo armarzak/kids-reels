@@ -37,6 +37,6 @@ jobs:
           fi
           git config user.name "kids-reels bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add videos.json .github/bot-state.json
+          git add videos.json settings.json .github/bot-state.json
           git commit -m "Бот: обновил список видео"
           git push

@@ -16,6 +16,7 @@ const ALLOWED = (process.env.TELEGRAM_ALLOWED_IDS || '')
   .split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
 
 const VIDEOS = 'videos.json';
+const SETTINGS = 'settings.json';
 const STATE = '.github/bot-state.json';
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
@@ -65,7 +66,8 @@ const HELP = [
   'Можно несколько ссылок одним сообщением.',
   '',
   '/list — что сейчас в ленте',
-  '/del <код> — убрать видео'
+  '/del <код> — убрать видео',
+  '/crop <срез сверху> <высота> — подгонка кадра со всех телефонов'
 ].join('\n');
 
 async function main() {
@@ -79,7 +81,9 @@ async function main() {
   const state = await readJson(STATE, { offset: 0 });
   let videos = await readJson(VIDEOS, []);
   if (!Array.isArray(videos)) videos = [];
+  let settings = await readJson(SETTINGS, { head: 54, ar: 1.7778 });
   const before = JSON.stringify(videos);
+  const beforeSettings = JSON.stringify(settings);
 
   const updates = await tg('getUpdates', {
     offset: state.offset || 0,
@@ -131,6 +135,26 @@ async function main() {
       continue;
     }
 
+    const crop = text.match(/^\/crop\b\s*(-?[\d.]+)?\s*(-?[\d.]+)?/i);
+    if (crop) {
+      const head = Number(crop[1]);
+      const ar = Number(crop[2]);
+      if (!Number.isFinite(head) || !Number.isFinite(ar) ||
+          head < 0 || head > 400 || ar < 0.5 || ar > 3) {
+        await say(chat, [
+          'Нужны два числа: срез сверху в пикселях и высота кадра.',
+          'Например: /crop 90 1.25',
+          '',
+          `Сейчас: /crop ${settings.head} ${settings.ar}`,
+          'Проще не считать руками: в приложении шестерёнка → Вид → ползунки → «Применить у дочки».'
+        ].join('\n'));
+        continue;
+      }
+      settings = { head, ar };
+      await say(chat, `Готово: срез сверху ${head} px, высота кадра ${ar} ширины.\nНа телефонах применится через пару минут.`);
+      continue;
+    }
+
     const del = text.match(/^\/del\b\s*(\S+)?/i);
     if (del) {
       const target = del[1] ? (codeOf(del[1]) || del[1]) : null;
@@ -172,6 +196,10 @@ async function main() {
 
   const changed = JSON.stringify(videos) !== before;
   if (changed) await writeFile(VIDEOS, JSON.stringify(videos, null, 2) + '\n');
+  if (JSON.stringify(settings) !== beforeSettings) {
+    await writeFile(SETTINGS, JSON.stringify(settings, null, 2) + '\n');
+    console.log(`settings.json обновлён: head=${settings.head} ar=${settings.ar}`);
+  }
   await writeFile(STATE, JSON.stringify({ offset: nextOffset }, null, 2) + '\n');
   console.log(changed ? `videos.json обновлён, видео: ${videos.length}` : 'Список не менялся.');
 }

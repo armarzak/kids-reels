@@ -61,7 +61,9 @@
   .crop {
     --ar: 1.7778;
     --head: 54px;
-    --foot: 98px;
+    /* --foot только добивает высоту кадра, чтобы плеер не обрезало
+       изнутри. Точность не нужна — лишь бы с запасом. */
+    --foot: 700px;
     --w: min(100vw, 540px, calc(100dvh / var(--ar)));
     position: relative; overflow: hidden; background: #000;
     /* flex: none — иначе соседний элемент ужмёт ширину, и высота,
@@ -172,6 +174,18 @@
   button.x { background: none; border: 0; color: var(--muted); font-size: 15px; cursor: pointer; padding: 6px; }
   .check { display: flex; align-items: center; gap: 10px; font-size: 15px; }
   .check input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+
+  /* Подгонка кадра. Превью уменьшено transform-ом целиком, поэтому
+     пропорции и срез совпадают с тем, что будет в ленте. */
+  .fitWrap {
+    overflow: hidden; display: flex; justify-content: center;
+    background: #000; border-radius: 10px; margin: 12px 0;
+  }
+  .fitWrap .crop { transform: scale(var(--s, .42)); transform-origin: top center; }
+  .slider { display: block; font-size: 14px; color: var(--muted); margin-top: 14px; }
+  .slider b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .slider input { width: 100%; margin-top: 6px; accent-color: var(--accent); }
+  #fitBox[hidden] { display: none; }
   a.btn {
     font: inherit; font-size: 15px; border-radius: 10px; padding: 11px 16px;
     background: var(--panel-2); color: var(--text); text-decoration: none; display: inline-block;
@@ -269,7 +283,19 @@
 
     <h3>Вид</h3>
     <label class="check"><input type="checkbox" id="cleanToggle"> Прятать имя канала и лайки</label>
-    <p class="hint">Остаётся только само видео. Если картинка обрежется или снизу появится полоска — выключите, и вернётся обычный плеер Instagram.</p>
+    <div id="fitBox">
+      <p class="hint">Instagram не говорит, какой высоты у него плеер, поэтому кадр подгоняется вручную — один раз. Двигайте ползунки, пока в окошке не останется одно видео: без имени канала сверху и без лайков снизу.</p>
+      <div class="fitWrap" id="fitWrap"></div>
+      <label class="slider">Срезать сверху: <b id="headVal">54</b> px
+        <input type="range" id="headRange" min="0" max="320" step="2"></label>
+      <label class="slider">Высота кадра: <b id="arVal">1.78</b> × ширины
+        <input type="range" id="arRange" min="0.6" max="2.2" step="0.01"></label>
+      <div class="row">
+        <button class="btn" id="fitReset">Сбросить</button>
+        <button class="btn primary" id="fitShare">Применить у дочки</button>
+      </div>
+      <div class="msg" id="fitMsg"></div>
+    </div>
 
     <h3>Безопасность</h3>
     <div class="row"><button class="btn danger" id="resetPinBtn">Сменить PIN</button></div>
@@ -295,7 +321,13 @@
   const KEY_CACHE = 'kidsreels.remote.v1';
   const KEY_PIN   = 'kidsreels.pin';
   const KEY_CLEAN = 'kidsreels.clean.v1';
+  const KEY_FIT   = 'kidsreels.fit.v1';
   const KEY_OLD   = 'kidsreels.videos.v1';
+
+  // head — сколько пикселей шапки плеера срезать, ar — высота медиа
+  // относительно ширины. Instagram их не сообщает, подбираются руками.
+  const DEFAULT_FIT = { head: 54, ar: 1.7778 };
+  const AR_POST = 1; // обычный пост плеер показывает квадратом
 
   // ---------- Хранилище ----------
   const storage = {
@@ -352,6 +384,18 @@
   let videos = [];
   let pending = null;
   let clean = storage.get(KEY_CLEAN, true); // прятать шапку канала и строку лайков
+  let remoteFit = null;                     // подгонка из settings.json
+
+  const sane = (v, lo, hi) => Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : null;
+  function cleanFit(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const out = {};
+    const h = sane(raw.head, 0, 400); if (h !== null) out.head = h;
+    const a = sane(raw.ar, 0.5, 3);   if (a !== null) out.ar = a;
+    return Object.keys(out).length ? out : null;
+  }
+  // Своя настройка перебивает общую: подгонял — значит видел результат.
+  const fit = () => ({ ...DEFAULT_FIT, ...(remoteFit || {}), ...(cleanFit(storage.get(KEY_FIT, null)) || {}) });
 
   // Перенос списка из прежней версии приложения
   const old = storage.get(KEY_OLD, null);
@@ -403,9 +447,26 @@
     if (!sameList(prev, videos)) renderFeed();
   }
 
+  async function fetchSettings() {
+    try {
+      const r = await fetch(`settings.json?t=${Date.now()}`, { cache: 'no-store' });
+      if (!r.ok) return null;
+      return cleanFit(await r.json());
+    } catch { return null; }
+  }
+
   // apply=true — показать сразу; иначе предложить плашкой, не перебивая просмотр
   async function refreshRemote(apply) {
+    const nextFit = await fetchSettings();
+    const fitChanged = JSON.stringify(nextFit) !== JSON.stringify(remoteFit);
+    if (fitChanged) remoteFit = nextFit;
+
     const data = await fetchRemote();
+    if (fitChanged && !apply && sameList(data, remote)) {
+      // Поменялась только подгонка — перерисовываем молча.
+      renderFeed();
+      return false;
+    }
     if (apply || !videos.length) { applyRemote(data); return true; }
     const next = dedupe([...data, ...local.filter(l => !data.some(r => r.code === l.code))]);
     if (sameList(next, videos)) { pending = null; banner.hidden = true; return false; }
@@ -429,11 +490,16 @@
     f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
     f.setAttribute('allow', 'autoplay; encrypted-media; fullscreen; picture-in-picture');
     if (!clean) return f;
+    return cropBox(v, f);
+  }
+
+  function cropBox(v, frame) {
+    const f = fit();
     const box = document.createElement('div');
     box.className = 'crop';
-    // Reels вертикальные 9:16, обычный пост плеер показывает квадратом.
-    box.style.setProperty('--ar', v.reel ? '1.7778' : '1');
-    box.append(f);
+    box.style.setProperty('--ar', String(v.reel ? f.ar : AR_POST));
+    box.style.setProperty('--head', f.head + 'px');
+    box.append(frame);
     return box;
   }
 
@@ -485,6 +551,11 @@
   function close(name) {
     overlays[name].classList.remove('open');
     if (name === 'preview') document.getElementById('previewFrame').src = 'about:blank';
+    if (name === 'parent') {
+      // Гасим превью, иначе звук продолжит играть, и показываем ленту с новой подгонкой.
+      document.getElementById('fitWrap').innerHTML = '';
+      renderFeed();
+    }
   }
   for (const [name, el] of Object.entries(overlays)) {
     el.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => close(name)));
@@ -545,7 +616,10 @@
 
   function openParent() {
     addMsg.textContent = ''; syncMsg.textContent = ''; jsonOut.value = '';
-    renderList(); open('parent');
+    renderList();
+    showFit(fit());
+    if (clean) buildFitPreview();
+    open('parent');
   }
 
   const isLocal = v => local.some(x => x.code === v.code);
@@ -639,12 +713,90 @@
     }
   });
 
+  // ---------- Подгонка кадра ----------
   const cleanToggle = document.getElementById('cleanToggle');
+  const fitBox = document.getElementById('fitBox');
+  const fitWrap = document.getElementById('fitWrap');
+  const fitMsg = document.getElementById('fitMsg');
+  const headRange = document.getElementById('headRange');
+  const arRange = document.getElementById('arRange');
+  const headVal = document.getElementById('headVal');
+  const arVal = document.getElementById('arVal');
+  const PREVIEW_SCALE = 0.42;
+
+  const sampleVideo = () => videos.find(v => v.reel) || videos[0] || null;
+
+  function syncFitPreview() {
+    const box = fitWrap.querySelector('.crop');
+    if (!box) return;
+    const v = sampleVideo();
+    const f = fit();
+    box.style.setProperty('--ar', String(v && !v.reel ? AR_POST : f.ar));
+    box.style.setProperty('--head', f.head + 'px');
+    fitWrap.style.height = Math.round(box.offsetHeight * PREVIEW_SCALE) + 'px';
+  }
+
+  function buildFitPreview() {
+    fitWrap.innerHTML = '';
+    fitWrap.style.height = '';
+    const v = sampleVideo();
+    if (!v) { fitMsg.textContent = 'Добавьте видео — и здесь появится окошко для подгонки.'; return; }
+    fitMsg.textContent = '';
+    const f = document.createElement('iframe');
+    f.src = embedUrl(v);
+    f.title = 'Подгонка кадра';
+    f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
+    f.setAttribute('allow', 'encrypted-media');
+    const box = cropBox(v, f);
+    box.style.setProperty('--s', String(PREVIEW_SCALE));
+    fitWrap.append(box);
+    syncFitPreview();
+  }
+
+  function showFit(f) {
+    headVal.textContent = String(Math.round(f.head));
+    arVal.textContent = (+f.ar).toFixed(2);
+    headRange.value = String(f.head);
+    arRange.value = String(f.ar);
+  }
+
+  function onFitInput() {
+    const f = { head: +headRange.value, ar: +arRange.value };
+    storage.set(KEY_FIT, f);
+    showFit(f);
+    syncFitPreview();
+  }
+  headRange.addEventListener('input', onFitInput);
+  arRange.addEventListener('input', onFitInput);
+
+  document.getElementById('fitReset').addEventListener('click', () => {
+    storage.remove(KEY_FIT);
+    showFit(fit());
+    syncFitPreview();
+    fitMsg.classList.remove('err');
+    fitMsg.textContent = 'Вернул как было.';
+  });
+
+  document.getElementById('fitShare').addEventListener('click', async () => {
+    const f = fit();
+    const cmd = `/crop ${Math.round(f.head)} ${(+f.ar).toFixed(2)}`;
+    try {
+      await navigator.clipboard.writeText(cmd);
+      fitMsg.classList.remove('err');
+      fitMsg.textContent = `Скопировал «${cmd}». Отправьте это боту — и кадр станет таким на всех телефонах.`;
+    } catch {
+      fitMsg.classList.add('err');
+      fitMsg.textContent = `Отправьте боту: ${cmd}`;
+    }
+  });
+
   cleanToggle.checked = clean;
+  fitBox.hidden = !clean;
   cleanToggle.addEventListener('change', () => {
     clean = cleanToggle.checked;
     storage.set(KEY_CLEAN, clean);
-    renderFeed();
+    fitBox.hidden = !clean;
+    if (clean) buildFitPreview(); else fitWrap.innerHTML = '';
   });
 
   document.getElementById('resetPinBtn').addEventListener('click', () => {
