@@ -46,14 +46,32 @@
     display: flex; align-items: center; justify-content: center;
     position: relative;
   }
-  .slide iframe {
+  .slide > iframe {
     border: 0; background: #fff;
     width: min(100vw, 540px);
     height: 100%;
     border-radius: 0;
   }
   @media (min-width: 600px) {
-    .slide iframe { height: calc(100% - 32px); border-radius: var(--radius); }
+    .slide > iframe { height: calc(100% - 32px); border-radius: var(--radius); }
+  }
+
+  /* Чистый вид: окно ровно по медиа, шапка канала уезжает вверх,
+     строка лайков — вниз за край. --ar = высота медиа / ширина. */
+  .crop {
+    --ar: 1.7778;
+    --head: 54px;
+    --foot: 98px;
+    --w: min(100vw, 540px, calc(100dvh / var(--ar)));
+    position: relative; overflow: hidden; background: #000;
+    width: var(--w);
+    height: calc(var(--w) * var(--ar));
+  }
+  @media (min-width: 600px) { .crop { border-radius: var(--radius); } }
+  .crop iframe {
+    position: absolute; left: 0; top: calc(-1 * var(--head));
+    width: 100%; height: calc(100% + var(--head) + var(--foot));
+    border: 0; background: #000;
   }
   .loader {
     width: 36px; height: 36px; border-radius: 50%;
@@ -149,6 +167,8 @@
   button.btn.danger { color: var(--danger); }
   button.btn:disabled { opacity: .4; }
   button.x { background: none; border: 0; color: var(--muted); font-size: 15px; cursor: pointer; padding: 6px; }
+  .check { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+  .check input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
   a.btn {
     font: inherit; font-size: 15px; border-radius: 10px; padding: 11px 16px;
     background: var(--panel-2); color: var(--text); text-decoration: none; display: inline-block;
@@ -244,6 +264,10 @@
       Через минуту нажмите «Обновить с GitHub» — видео станут общими, и телефон дочки их подхватит.
     </div>
 
+    <h3>Вид</h3>
+    <label class="check"><input type="checkbox" id="cleanToggle"> Прятать имя канала и лайки</label>
+    <p class="hint">Остаётся только само видео. Если картинка обрежется или снизу появится полоска — выключите, и вернётся обычный плеер Instagram.</p>
+
     <h3>Безопасность</h3>
     <div class="row"><button class="btn danger" id="resetPinBtn">Сменить PIN</button></div>
   </div>
@@ -267,6 +291,7 @@
   const KEY_LOCAL = 'kidsreels.local.v1';
   const KEY_CACHE = 'kidsreels.remote.v1';
   const KEY_PIN   = 'kidsreels.pin';
+  const KEY_CLEAN = 'kidsreels.clean.v1';
   const KEY_OLD   = 'kidsreels.videos.v1';
 
   // ---------- Хранилище ----------
@@ -282,11 +307,17 @@
   };
 
   // ---------- Разбор ссылок ----------
-  const LINK_RE = /instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(p|reels?|tv)\/([A-Za-z0-9_-]+)/gi;
+  // Хвост ссылки ловим только ради img_index: он выдаёт карусель,
+  // а карусель встроенный плеер показывает одним первым слайдом.
+  const LINK_RE = /instagram\.com\/(?:[A-Za-z0-9_.]+\/)?(p|reels?|tv)\/([A-Za-z0-9_-]+)\/?(\?[^\s"'<>]*)?/gi;
   function extract(text) {
     const out = [];
     for (const m of String(text).matchAll(LINK_RE)) {
-      out.push({ code: m[2], reel: m[1].toLowerCase().startsWith('reel') });
+      out.push({
+        code: m[2],
+        reel: m[1].toLowerCase().startsWith('reel'),
+        slide: /[?&]img_index=/i.test(m[3] || '')
+      });
     }
     return out;
   }
@@ -295,7 +326,10 @@
 
   // Запись в videos.json: ссылка строкой или объект {code, reel}
   function normalize(x) {
-    if (typeof x === 'string') return extract(x)[0] || null;
+    if (typeof x === 'string') {
+      const v = extract(x)[0];
+      return v ? { code: v.code, reel: v.reel } : null;
+    }
     if (x && typeof x.code === 'string' && /^[A-Za-z0-9_-]+$/.test(x.code)) {
       return { code: x.code, reel: !!x.reel };
     }
@@ -314,6 +348,7 @@
   let local  = dedupe((storage.get(KEY_LOCAL, []) || []).map(normalize).filter(Boolean));
   let videos = [];
   let pending = null;
+  let clean = storage.get(KEY_CLEAN, true); // прятать шапку канала и строку лайков
 
   // Перенос списка из прежней версии приложения
   const old = storage.get(KEY_OLD, null);
@@ -335,12 +370,14 @@
 
   function addFrom(text) {
     const fresh = [];
+    let carousel = 0;
     for (const v of extract(text)) {
       if (videos.some(x => x.code === v.code) || fresh.some(x => x.code === v.code)) continue;
-      fresh.push(v);
+      fresh.push({ code: v.code, reel: v.reel });
+      if (v.slide) carousel++;
     }
     if (fresh.length) { local = dedupe([...fresh, ...local]); saveLocal(); rebuild(); }
-    return fresh.length;
+    return { added: fresh.length, carousel };
   }
 
   // ---------- Общий список ----------
@@ -380,7 +417,7 @@
   const banner = document.getElementById('newBanner');
   let observer;
 
-  function makeFrame(v) {
+  function makePlayer(v) {
     const f = document.createElement('iframe');
     f.src = embedUrl(v);
     f.title = 'Видео';
@@ -388,14 +425,20 @@
     // Без allow-top-navigation и allow-popups: из плеера нельзя уйти в Instagram.
     f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
     f.setAttribute('allow', 'autoplay; encrypted-media; fullscreen; picture-in-picture');
-    return f;
+    if (!clean) return f;
+    const box = document.createElement('div');
+    box.className = 'crop';
+    // Reels вертикальные 9:16, обычный пост плеер показывает квадратом.
+    box.style.setProperty('--ar', v.reel ? '1.7778' : '1');
+    box.append(f);
+    return box;
   }
 
   function activate(slide, on) {
-    const has = slide.querySelector('iframe');
+    const has = slide.querySelector('.crop, iframe');
     if (on && !has) {
       slide.querySelector('.loader')?.remove();
-      slide.prepend(makeFrame(videos[+slide.dataset.i]));
+      slide.prepend(makePlayer(videos[+slide.dataset.i]));
     } else if (!on && has) {
       has.remove(); // выгружаем — чтобы звук пролистанного видео не играл
       const l = document.createElement('div'); l.className = 'loader';
@@ -548,10 +591,17 @@
   }
 
   document.getElementById('addBtn').addEventListener('click', () => {
-    const n = addFrom(linkInput.value);
-    addMsg.classList.toggle('err', !n);
-    addMsg.textContent = n ? `Добавлено видео: ${n}` : 'Новых ссылок Instagram не найдено (или такие уже есть).';
-    if (n) { linkInput.value = ''; renderList(); renderFeed(); }
+    const { added, carousel } = addFrom(linkInput.value);
+    addMsg.classList.toggle('err', !added);
+    if (!added) {
+      addMsg.textContent = 'Новых ссылок Instagram не найдено (или такие уже есть).';
+      return;
+    }
+    addMsg.textContent = `Добавлено видео: ${added}.` + (carousel
+      ? ` Внимание: ${carousel} — ссылка на слайд карусели. Плеер всегда начинает с первого слайда, проверьте кнопкой ▶.`
+      : '');
+    linkInput.value = '';
+    renderList(); renderFeed();
   });
 
   document.getElementById('pasteBtn').addEventListener('click', async () => {
@@ -584,6 +634,14 @@
       syncMsg.classList.add('err');
       syncMsg.textContent = 'Не удалось загрузить videos.json (' + e.message + ').';
     }
+  });
+
+  const cleanToggle = document.getElementById('cleanToggle');
+  cleanToggle.checked = clean;
+  cleanToggle.addEventListener('change', () => {
+    clean = cleanToggle.checked;
+    storage.set(KEY_CLEAN, clean);
+    renderFeed();
   });
 
   document.getElementById('resetPinBtn').addEventListener('click', () => {
