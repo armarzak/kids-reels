@@ -618,8 +618,10 @@
     addMsg.textContent = ''; syncMsg.textContent = ''; jsonOut.value = '';
     renderList();
     showFit(fit());
-    if (clean) buildFitPreview();
+    // Сначала показать лист: у скрытого offsetHeight равен нулю,
+    // и окошко превью получило бы нулевую высоту.
     open('parent');
+    if (clean) buildFitPreview();
   }
 
   const isLocal = v => local.some(x => x.code === v.code);
