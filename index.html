@@ -64,6 +64,9 @@
     --foot: 98px;
     --w: min(100vw, 540px, calc(100dvh / var(--ar)));
     position: relative; overflow: hidden; background: #000;
+    /* flex: none — иначе соседний элемент ужмёт ширину, и высота,
+       посчитанная от --w, перестанет совпадать с медиа. */
+    flex: none;
     width: var(--w);
     height: calc(var(--w) * var(--ar));
   }
