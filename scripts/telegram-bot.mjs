@@ -69,6 +69,13 @@ const HELP = [
 ].join('\n');
 
 async function main() {
+  // Кому принадлежит токен и не перехвачен ли опрос вебхуком —
+  // без этого «сообщений нет» невозможно отличить от «пишете не туда».
+  const me = await tg('getMe', {});
+  console.log(`Токен принадлежит боту @${me.username} (${me.first_name}).`);
+  const hook = await tg('getWebhookInfo', {});
+  if (hook.url) console.log(`ВНИМАНИЕ: на боте стоит вебхук ${hook.url} — он забирает сообщения себе.`);
+
   const state = await readJson(STATE, { offset: 0 });
   let videos = await readJson(VIDEOS, []);
   if (!Array.isArray(videos)) videos = [];
@@ -80,10 +87,8 @@ async function main() {
     allowed_updates: ['message']
   });
 
-  if (!updates.length) {
-    console.log('Новых сообщений нет.');
-    return;
-  }
+  console.log(`Сообщений получено: ${updates.length} (offset был ${state.offset || 0}).`);
+  if (!updates.length) return;
 
   let nextOffset = state.offset || 0;
 
