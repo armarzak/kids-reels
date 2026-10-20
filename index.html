@@ -111,6 +111,28 @@
   }
   #newBanner[hidden] { display: none; }
 
+  /* Убрать текущее видео. Рядом с шестерёнкой, такой же неброский. */
+  #drop {
+    position: fixed; z-index: 5;
+    top: calc(10px + env(safe-area-inset-top)); right: 62px;
+    width: 44px; height: 44px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.35); color: rgba(255,255,255,.35);
+    border: 0; font-size: 19px; line-height: 1;
+    user-select: none; -webkit-user-select: none;
+  }
+  #drop[hidden] { display: none; }
+
+  #toast {
+    position: fixed; z-index: 7; left: 50%; transform: translateX(-50%);
+    bottom: calc(26px + env(safe-area-inset-bottom));
+    background: rgba(20,20,26,.96); color: var(--text);
+    font-size: 14px; line-height: 1.35; padding: 11px 16px; border-radius: 12px;
+    max-width: calc(100vw - 32px); text-align: center;
+    opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+
   /* Шестерёнка родителя: удерживать 1,5 с */
   #gear {
     position: fixed; z-index: 5;
@@ -229,6 +251,10 @@
 
 <button id="newBanner" hidden>Новые видео — обновить</button>
 
+<div id="toast" role="status"></div>
+
+<button id="drop" aria-label="Убрать это видео" hidden>✕</button>
+
 <button id="gear" aria-label="Для родителей (удерживать)">
   <span class="ring"></span>
   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L4.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1l.4 2.6h4l.4-2.6c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
@@ -262,6 +288,7 @@
     <ul class="list" id="list"></ul>
     <div class="row">
       <button class="btn" id="reloadBtn">Обновить с GitHub</button>
+      <button class="btn" id="unhideBtn">Вернуть скрытые</button>
     </div>
     <div class="msg" id="syncMsg"></div>
 
@@ -322,6 +349,7 @@
   const KEY_PIN   = 'kidsreels.pin';
   const KEY_CLEAN = 'kidsreels.clean.v1';
   const KEY_FIT   = 'kidsreels.fit.v1';
+  const KEY_HIDDEN = 'kidsreels.hidden.v1';
   const KEY_OLD   = 'kidsreels.videos.v1';
 
   // head — сколько пикселей шапки плеера срезать, ar — высота медиа
@@ -413,7 +441,12 @@
     local = local.filter(l => !remote.some(r => r.code === l.code));
     if (local.length !== before) saveLocal();
   }
-  function rebuild() { videos = dedupe([...remote, ...local]); }
+  // Спрятанные на этом устройстве. Из общего videos.json их убирает
+  // только бот — приложению писать в репозиторий нечем.
+  let hidden = new Set(storage.get(KEY_HIDDEN, []) || []);
+  const saveHidden = () => storage.set(KEY_HIDDEN, [...hidden]);
+
+  function rebuild() { videos = dedupe([...remote, ...local]).filter(v => !hidden.has(v.code)); }
 
   function addFrom(text) {
     const fresh = [];
@@ -480,6 +513,7 @@
   const empty = document.getElementById('empty');
   const banner = document.getElementById('newBanner');
   let observer;
+  let current = 0; // какой ролик сейчас на экране — нужен кнопке «убрать»
 
   function makePlayer(v) {
     const f = document.createElement('iframe');
@@ -519,7 +553,9 @@
     observer?.disconnect();
     feed.innerHTML = '';
     empty.style.display = videos.length ? 'none' : 'flex';
-    if (!videos.length) return;
+    document.getElementById('drop').hidden = !videos.length;
+    if (!videos.length) { current = 0; return; }
+    current = Math.min(Math.max(current, 0), videos.length - 1);
 
     videos.forEach((v, i) => {
       const s = document.createElement('section');
@@ -529,10 +565,13 @@
       feed.append(s);
     });
 
+    // Остаёмся на том же месте: после «убрать» лента не должна
+    // отматываться в начало.
+    if (current) feed.scrollTop = current * feed.clientHeight;
+
     // Держим загруженными текущий кадр и следующий: плеер Instagram
     // не запускается сам, так что пусть хотя бы не заставляет ждать
     // загрузку после свайпа. Дальние выгружаем — иначе играет звук.
-    let current = 0;
     const syncSlides = () => feed.querySelectorAll('.slide').forEach(s => {
       const i = +s.dataset.i;
       activate(s, i === current || i === current + 1);
@@ -549,9 +588,41 @@
   }
 
   banner.addEventListener('click', () => {
+    current = 0;
     if (pending) applyRemote(pending);
     banner.hidden = true;
     feed.scrollTo({ top: 0 });
+  });
+
+  // ---------- Убрать видео ----------
+  const toast = document.getElementById('toast');
+  let toastTimer;
+  function showToast(text) {
+    toast.textContent = text;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 4000);
+  }
+
+  document.getElementById('drop').addEventListener('click', async () => {
+    const v = videos[current];
+    if (!v) return;
+    if (!confirm('Убрать это видео из ленты?')) return;
+
+    hidden.add(v.code);
+    saveHidden();
+    rebuild();
+    renderFeed();
+
+    // У приложения нет прав писать в репозиторий, поэтому из общего
+    // списка видео убирает бот — подаём команду готовой.
+    const cmd = `/del ${v.code}`;
+    try {
+      await navigator.clipboard.writeText(cmd);
+      showToast(`Убрал. Команда «${cmd}» скопирована — отправьте её боту, чтобы видео исчезло и у дочки.`);
+    } catch {
+      showToast(`Убрал здесь. Чтобы исчезло и у дочки, отправьте боту: ${cmd}`);
+    }
   });
 
   // ---------- Окна ----------
@@ -640,7 +711,9 @@
   const isLocal = v => local.some(x => x.code === v.code);
 
   function renderList() {
-    listTitle.textContent = `Видео: ${videos.length}` + (local.length ? ` · не сохранено: ${local.length}` : '');
+    listTitle.textContent = `Видео: ${videos.length}`
+      + (local.length ? ` · не сохранено: ${local.length}` : '')
+      + (hidden.size ? ` · скрыто: ${hidden.size}` : '');
     list.innerHTML = '';
     if (!videos.length) {
       list.innerHTML = '<li class="item"><div class="meta"><div class="code">список пуст</div></div></li>';
@@ -812,6 +885,15 @@
     storage.set(KEY_CLEAN, clean);
     fitBox.hidden = !clean;
     if (clean) buildFitPreview(); else fitWrap.innerHTML = '';
+  });
+
+  document.getElementById('unhideBtn').addEventListener('click', () => {
+    syncMsg.classList.remove('err');
+    if (!hidden.size) { syncMsg.textContent = 'Скрытых нет.'; return; }
+    const n = hidden.size;
+    hidden.clear(); saveHidden();
+    rebuild(); renderList(); renderFeed();
+    syncMsg.textContent = `Вернул в ленту: ${n}.`;
   });
 
   document.getElementById('resetPinBtn').addEventListener('click', () => {
