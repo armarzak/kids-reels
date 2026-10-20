@@ -21,16 +21,18 @@
 
 Нужна пара ключей: открытый знает приложение, закрытым бот подписывает уведомления.
 
-1. Сгенерируйте пару — команда ничего не устанавливает насовсем и печатает два ключа:
+1. Одна команда делает пару и сразу кладёт закрытый ключ в секреты репозитория. На экран он не попадает: уходит по конвейеру прямо в `gh`, а показывается только открытый.
+
    ```
-   npx web-push generate-vapid-keys
+   node -e "const c=require('crypto');const k=c.generateKeyPairSync('ec',{namedCurve:'prime256v1'});const P=k.publicKey.export({type:'spki',format:'der'}).subarray(-65).toString('base64url');const S=k.privateKey.export({type:'pkcs8',format:'der'}).subarray(36,68).toString('base64url');console.error('');console.error('Отправьте боту:');console.error('/pushkey '+P);console.error('');process.stdout.write(S);" | gh secret set VAPID_PRIVATE_KEY --repo armarzak/kids-reels
    ```
-2. **Private Key** — в секреты репозитория. Команда спросит его скрытым вводом, в переписке он не светится:
-   ```
-   gh secret set VAPID_PRIVATE_KEY --repo armarzak/kids-reels
-   ```
-3. **Public Key** — отправьте боту одной строкой: `/pushkey BPx...`
-4. На каждом телефоне: шестерёнка → **Уведомления** → «Включить на этом телефоне». Приложение попросит разрешение и выдаст команду вида `/push ...` — отправьте её боту. Всё.
+
+   Ключи VAPID — это обычная пара на кривой P-256, Node умеет её сам; ставить `web-push` ради этого не нужно (и `npx` на Windows упирается в запрет запуска сценариев).
+
+2. Отправьте боту строку `/pushkey ...`, которую напечатала команда.
+3. На каждом телефоне: шестерёнка → **Уведомления** → «Включить на этом телефоне». Приложение попросит разрешение и выдаст команду вида `/push ...` — отправьте её боту. Всё.
+
+Проверить, что закрытый ключ лёг: `gh secret list --repo armarzak/kids-reels` — в списке должен быть `VAPID_PRIVATE_KEY`.
 
 `/push` можно слать кому угодно из впущенных: подписка привязана к телефону, а не к человеку.
 
