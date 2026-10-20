@@ -25,6 +25,9 @@ const STATE = '.github/bot-state.json';
 // Кого хозяева впустили командой /allow — лежит в репозитории, чтобы
 // добавлять жену или бабушку, не трогая настройки GitHub.
 const ALLOWLIST = '.github/bot-allowed.json';
+// Подписки телефонов на уведомления. Приложение записать их не может,
+// поэтому присылает командой /push, а хранит их репозиторий.
+const PUSHSUBS = '.github/push-subs.json';
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
 // Тот же разбор ссылок, что и в приложении.
@@ -96,7 +99,7 @@ function commitAndPush(message) {
   if (!git('status', '--porcelain')) return false;
   git('config', 'user.name', 'kids-reels bot');
   git('config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com');
-  git('add', VIDEOS, SETTINGS, STATE, ALLOWLIST);
+  git('add', VIDEOS, SETTINGS, STATE, ALLOWLIST, PUSHSUBS);
   git('commit', '-m', message);
 
   // Пока шла смена, в ветку могли закоммитить руками — подбираем и пробуем снова.
@@ -126,7 +129,8 @@ const HELP_OWNER = HELP + '\n\n' + [
   'Только для вас:',
   '/who — кто имеет доступ',
   '/allow <ID> — впустить человека',
-  '/deny <ID> — закрыть доступ'
+  '/deny <ID> — закрыть доступ',
+  '/pushkey <ключ> — включить уведомления на телефоны'
 ].join('\n');
 
 async function main() {
@@ -143,12 +147,58 @@ async function main() {
   let settings = await readJson(SETTINGS, { head: 56, ar: 1.23 });
   const allowFile = await readJson(ALLOWLIST, { ids: [] });
   let guests = new Set((allowFile.ids || []).map(String));
+  const pushFile = await readJson(PUSHSUBS, { subs: [] });
+  let subs = Array.isArray(pushFile.subs) ? pushFile.subs : [];
   let offset = state.offset || 0;
+  let addedNow = 0; // сколько видео добавили в текущей пачке — для пушей
 
   const isOwner = chat => OWNERS.includes(chat);
   const mayUse = chat => isOwner(chat) || guests.has(chat);
+  const everyone = () => [...new Set([...OWNERS, ...guests])];
   const tellOwners = text => Promise.all(OWNERS.map(o => say(o, text)));
   const announced = new Set(); // о каждом незнакомце пишем один раз за смену
+
+  // Уведомления на телефоны. Отправляются с ключами VAPID: открытый
+  // лежит в settings.json (его же читает приложение), закрытый — в
+  // секретах репозитория. Нет хотя бы одного — просто молчим.
+  async function sendPush(count) {
+    const priv = process.env.VAPID_PRIVATE_KEY;
+    if (!priv || !settings.vapid || !subs.length) {
+      console.log('Пуши пропускаю: ' +
+        (!priv ? 'нет VAPID_PRIVATE_KEY' : !settings.vapid ? 'нет открытого ключа' : 'нет подписок'));
+      return false;
+    }
+    let webpush;
+    try { webpush = (await import('web-push')).default; }
+    catch { console.error('Пакет web-push не установлен — пуши не отправлены.'); return false; }
+
+    webpush.setVapidDetails('https://armarzak.github.io/kids-reels/', settings.vapid, priv);
+    const payload = JSON.stringify({
+      title: count > 1 ? `Новых видео: ${count}` : 'Новое видео',
+      body: 'Загляни в ленту',
+      url: 'https://armarzak.github.io/kids-reels/'
+    });
+
+    const alive = [];
+    for (const s of subs) {
+      try {
+        await webpush.sendNotification(s, payload);
+        alive.push(s);
+      } catch (e) {
+        // 404 и 410 — телефон отписался или снёс приложение.
+        if (e.statusCode === 404 || e.statusCode === 410) {
+          console.log('Подписка протухла, убираю.');
+        } else {
+          console.error('Пуш не ушёл:', e.statusCode || e.message);
+          alive.push(s);
+        }
+      }
+    }
+    const dropped = subs.length !== alive.length;
+    subs = alive;
+    console.log(`Пуши отправлены на устройств: ${alive.length}`);
+    return dropped;
+  }
 
   const budgetMs = Math.max(1, Number(process.env.POLL_MINUTES) || 50) * 60_000;
   const started = Date.now();
@@ -245,6 +295,38 @@ async function main() {
       return;
     }
 
+    const pushKey = text.match(/^\/pushkey\b\s*(\S+)?/i);
+    if (pushKey) {
+      if (!isOwner(chat)) { await say(chat, 'Это умеет только хозяин бота.'); return; }
+      const key = (pushKey[1] || '').trim();
+      if (!/^[A-Za-z0-9_-]{80,}$/.test(key)) {
+        await say(chat, 'Пришлите открытый ключ целиком, одной строкой:\n/pushkey BPx...');
+        return;
+      }
+      settings = { ...settings, vapid: key };
+      await say(chat, 'Ключ принят. Теперь на каждом телефоне: шестерёнка → Уведомления → «Включить на этом телефоне».');
+      return;
+    }
+
+    const pushSub = text.match(/^\/push\b\s*(\S+)?/i);
+    if (pushSub) {
+      const blob = (pushSub[1] || '').trim();
+      if (!blob) {
+        await say(chat, 'Эту команду выдаёт само приложение: шестерёнка → Уведомления → «Включить на этом телефоне».');
+        return;
+      }
+      let sub = null;
+      try { sub = JSON.parse(Buffer.from(blob, 'base64').toString('utf8')); } catch { /* мусор */ }
+      if (!sub || typeof sub.endpoint !== 'string' || !sub.keys || !sub.keys.p256dh || !sub.keys.auth) {
+        await say(chat, 'Не разобрал подписку. Скопируйте команду из приложения целиком, одним куском.');
+        return;
+      }
+      subs = subs.filter(s => s.endpoint !== sub.endpoint);
+      subs.push({ endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } });
+      await say(chat, `Телефон подключён. Устройств с уведомлениями: ${subs.length}.`);
+      return;
+    }
+
     const del = text.match(/^\/del\b\s*(\S+)?/i);
     if (del) {
       const target = del[1] ? (codeOf(del[1]) || del[1]) : null;
@@ -278,18 +360,33 @@ async function main() {
     if (carousel) reply.push('Внимание: ссылка ведёт на слайд карусели — плеер покажет только первый слайд.');
     if (fresh.length) reply.push('У дочки появится через минуту.');
     await say(chat, reply.join('\n'));
+
+    if (!fresh.length) return;
+    addedNow += fresh.length;
+
+    // Остальным взрослым — весточка в Telegram, чтобы не гадать,
+    // кто и что подкинул в ленту.
+    for (const other of everyone().filter(c => c !== chat)) {
+      await say(other, `${who} добавил${fresh.length > 1 ? ` видео: ${fresh.length}` : ' видео'}. Всего в ленте ${videos.length}.`);
+    }
   }
 
   // Что лежит на диске — чтобы не трогать файлы впустую.
   const guestList = () => JSON.stringify({ ids: [...guests] });
+  const subList = () => JSON.stringify({ subs });
   let onDisk = {
     videos: JSON.stringify(videos),
     settings: JSON.stringify(settings),
     guests: guestList(),
+    subs: subList(),
     offset
   };
 
   async function persist() {
+    if (subList() !== onDisk.subs) {
+      await writeFile(PUSHSUBS, JSON.stringify({ subs }, null, 2) + '\n');
+      console.log(`Устройств с уведомлениями: ${subs.length}`);
+    }
     if (guestList() !== onDisk.guests) {
       await writeFile(ALLOWLIST, JSON.stringify({ ids: [...guests] }, null, 2) + '\n');
       console.log(`Впущены: ${[...guests].join(', ') || 'никто'}`);
@@ -309,6 +406,7 @@ async function main() {
       videos: JSON.stringify(videos),
       settings: JSON.stringify(settings),
       guests: guestList(),
+      subs: subList(),
       offset
     };
   }
@@ -321,6 +419,7 @@ async function main() {
     if (!updates.length) continue;
 
     console.log(`Сообщений: ${updates.length}`);
+    addedNow = 0;
     for (const u of updates) {
       offset = Math.max(offset, u.update_id + 1);
       if (u.message && typeof u.message.text === 'string') await handle(u.message);
@@ -330,6 +429,11 @@ async function main() {
     // в воздухе, а при обрыве задания терялся бы и номер сообщения.
     await persist();
     commitAndPush('Бот: обновил список видео');
+
+    if (addedNow) {
+      const dropped = await sendPush(addedNow);
+      if (dropped) { await persist(); commitAndPush('Бот: убрал протухшие подписки'); }
+    }
   }
 }
 

@@ -33,10 +33,15 @@ jobs:
         with:
           node-version: '20'
 
+      # Нужен только для уведомлений на телефоны.
+      - name: Поставить web-push
+        run: npm install --no-save --no-audit --no-fund web-push@3.6.7
+
       # Коммитит и пушит сам скрипт — по ходу смены, а не в конце.
       - name: Дежурить у Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ALLOWED_IDS: ${{ vars.TELEGRAM_ALLOWED_IDS }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           POLL_MINUTES: '345'
         run: node scripts/telegram-bot.mjs

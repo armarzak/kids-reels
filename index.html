@@ -236,7 +236,7 @@
   .item button:disabled { opacity: .3; }
 
   #previewFrame { width: 100%; height: 70dvh; border: 0; border-radius: 10px; background: #fff; }
-  #jsonOut { font-family: ui-monospace, Menlo, monospace; font-size: 12px; min-height: 120px; margin-top: 10px; }
+  #jsonOut, #pushOut { font-family: ui-monospace, Menlo, monospace; font-size: 12px; min-height: 100px; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -324,6 +324,14 @@
       </div>
       <div class="msg" id="fitMsg"></div>
     </div>
+
+    <h3>Уведомления</h3>
+    <div class="row">
+      <button class="btn primary" id="pushBtn">Включить на этом телефоне</button>
+    </div>
+    <div class="msg" id="pushMsg"></div>
+    <textarea id="pushOut" readonly placeholder="Здесь появится команда для бота"></textarea>
+    <p class="hint">Телефон будет получать уведомление, когда в ленту добавят видео. Включать нужно на каждом телефоне отдельно. На айфоне работает, только если приложение открыто с экрана «Домой», а не из браузера.</p>
 
     <h3>Безопасность</h3>
     <div class="row"><button class="btn danger" id="resetPinBtn">Сменить PIN</button></div>
@@ -414,6 +422,7 @@
   let pending = null;
   let clean = storage.get(KEY_CLEAN, true); // прятать шапку канала и строку лайков
   let remoteFit = null;                     // подгонка из settings.json
+  let vapidKey = '';                        // открытый ключ для пушей, оттуда же
 
   const sane = (v, lo, hi) => Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : null;
   function cleanFit(raw) {
@@ -485,7 +494,9 @@
     try {
       const r = await fetch(`settings.json?t=${Date.now()}`, { cache: 'no-store' });
       if (!r.ok) return null;
-      return cleanFit(await r.json());
+      const raw = await r.json();
+      vapidKey = typeof raw.vapid === 'string' ? raw.vapid : '';
+      return cleanFit(raw);
     } catch { return null; }
   }
 
@@ -721,6 +732,7 @@
 
   function openParent() {
     addMsg.textContent = ''; syncMsg.textContent = ''; jsonOut.value = '';
+    pushMsg.textContent = ''; pushMsg.classList.remove('err'); pushOut.value = '';
     renderList();
     showFit(fit());
     // Сначала показать лист: у скрытого offsetHeight равен нулю,
@@ -906,6 +918,55 @@
     storage.set(KEY_CLEAN, clean);
     fitBox.hidden = !clean;
     if (clean) buildFitPreview(); else fitWrap.innerHTML = '';
+  });
+
+  // ---------- Уведомления ----------
+  const pushMsg = document.getElementById('pushMsg');
+  const pushOut = document.getElementById('pushOut');
+
+  // Ключ приходит строкой base64url, а подписке нужен массив байт.
+  function keyToBytes(key) {
+    const pad = '='.repeat((4 - key.length % 4) % 4);
+    const raw = atob((key + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+  }
+
+  document.getElementById('pushBtn').addEventListener('click', async () => {
+    const fail = t => { pushMsg.classList.add('err'); pushMsg.textContent = t; };
+    pushMsg.classList.remove('err');
+
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      return fail('Этот браузер не умеет уведомления. На айфоне откройте приложение с экрана «Домой», а не из Safari.');
+    }
+    if (!vapidKey) {
+      return fail('Ключ для уведомлений ещё не задан — сначала отправьте боту команду /pushkey (как её взять, написано в README).');
+    }
+
+    try {
+      pushMsg.textContent = 'Спрашиваю разрешение…';
+      if (await Notification.requestPermission() !== 'granted') {
+        return fail('Разрешение не дано — уведомления приходить не будут.');
+      }
+      const reg = await navigator.serviceWorker.register('sw.js');
+      await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: keyToBytes(vapidKey)
+      });
+
+      // Записать подписку в репозиторий приложению нечем — передаём её
+      // через бота, как и всё остальное.
+      const cmd = '/push ' + btoa(unescape(encodeURIComponent(JSON.stringify(sub.toJSON()))));
+      pushOut.value = cmd;
+      try {
+        await navigator.clipboard.writeText(cmd);
+        pushMsg.textContent = 'Готово. Команда скопирована — отправьте её боту, и этот телефон начнёт получать уведомления.';
+      } catch {
+        pushMsg.textContent = 'Готово. Скопируйте команду из поля ниже и отправьте её боту.';
+      }
+    } catch (e) {
+      fail('Не вышло: ' + e.message);
+    }
   });
 
   document.getElementById('unhideBtn').addEventListener('click', () => {
