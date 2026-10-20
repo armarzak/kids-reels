@@ -529,10 +529,23 @@
       feed.append(s);
     });
 
+    // Держим загруженными текущий кадр и следующий: плеер Instagram
+    // не запускается сам, так что пусть хотя бы не заставляет ждать
+    // загрузку после свайпа. Дальние выгружаем — иначе играет звук.
+    let current = 0;
+    const syncSlides = () => feed.querySelectorAll('.slide').forEach(s => {
+      const i = +s.dataset.i;
+      activate(s, i === current || i === current + 1);
+    });
+
     observer = new IntersectionObserver(entries => {
-      for (const e of entries) activate(e.target, e.intersectionRatio >= 0.6);
+      for (const e of entries) {
+        if (e.intersectionRatio >= 0.6) current = +e.target.dataset.i;
+      }
+      syncSlides();
     }, { root: feed, threshold: [0, 0.6] });
     feed.querySelectorAll('.slide').forEach(s => observer.observe(s));
+    syncSlides();
   }
 
   banner.addEventListener('click', () => {
