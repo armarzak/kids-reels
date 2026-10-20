@@ -81,7 +81,7 @@ async function main() {
   const state = await readJson(STATE, { offset: 0 });
   let videos = await readJson(VIDEOS, []);
   if (!Array.isArray(videos)) videos = [];
-  let settings = await readJson(SETTINGS, { head: 54, ar: 1.7778 });
+  let settings = await readJson(SETTINGS, { head: 56, ar: 1.23 });
   const before = JSON.stringify(videos);
   const beforeSettings = JSON.stringify(settings);
 
