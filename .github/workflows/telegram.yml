@@ -21,26 +21,19 @@ jobs:
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Полная история: бот сам делает rebase, если в ветку
+          # закоммитили, пока шла смена.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Забрать сообщения и обновить список
+      # Коммитит и пушит сам скрипт — по ходу смены, а не в конце.
+      - name: Дежурить у Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ALLOWED_IDS: ${{ vars.TELEGRAM_ALLOWED_IDS }}
           POLL_MINUTES: '50'
         run: node scripts/telegram-bot.mjs
-
-      - name: Закоммитить изменения
-        run: |
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "Менять нечего."
-            exit 0
-          fi
-          git config user.name "kids-reels bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add videos.json settings.json .github/bot-state.json
-          git commit -m "Бот: обновил список видео"
-          git push
