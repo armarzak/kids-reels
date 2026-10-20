@@ -16,6 +16,9 @@ jobs:
   poll:
     if: github.repository == 'armarzak/kids-reels'
     runs-on: ubuntu-latest
+    # Смена чуть длиннее срока дежурства: если задание зависнет,
+    # оно не займёт очередь на шесть часов.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +30,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ALLOWED_IDS: ${{ vars.TELEGRAM_ALLOWED_IDS }}
+          POLL_MINUTES: '50'
         run: node scripts/telegram-bot.mjs
 
       - name: Закоммитить изменения

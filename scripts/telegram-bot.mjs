@@ -42,15 +42,32 @@ const codeOf = v => typeof v === 'string'
   ? (extract(v)[0]?.code ?? null)
   : (v && typeof v.code === 'string' ? v.code : null);
 
-async function tg(method, payload) {
+async function tg(method, payload, timeoutMs = 30000) {
   const r = await fetch(`${API}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(timeoutMs)
   });
   const data = await r.json();
   if (!data.ok) throw new Error(`${method}: ${data.description}`);
   return data.result;
+}
+
+// Длинный опрос: запрос висит до 25 секунд и возвращается сразу,
+// как только пришло сообщение. Сеть иногда рвёт его на полпути —
+// это нормально, просто спрашиваем заново.
+async function waitForUpdates(offset, seconds) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await tg('getUpdates', { offset, timeout: seconds, allowed_updates: ['message'] },
+        (seconds + 20) * 1000);
+    } catch (e) {
+      if (attempt >= 3) throw e;
+      console.error(`Опрос сорвался (${e.message}) — пробую ещё раз.`);
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
 }
 
 const say = (chat, text) =>
@@ -85,16 +102,24 @@ async function main() {
   const before = JSON.stringify(videos);
   const beforeSettings = JSON.stringify(settings);
 
-  const updates = await tg('getUpdates', {
-    offset: state.offset || 0,
-    timeout: 0,
-    allowed_updates: ['message']
-  });
-
-  console.log(`Сообщений получено: ${updates.length} (offset был ${state.offset || 0}).`);
-  if (!updates.length) return;
-
   let nextOffset = state.offset || 0;
+
+  // Держим линию открытой весь отведённый срок. Как только что-то
+  // пришло — обрабатываем и выходим, чтобы коммит ушёл сразу, а не
+  // ждал конца смены; следующий запуск тут же встаёт на дежурство.
+  const budgetMs = Math.max(1, Number(process.env.POLL_MINUTES) || 50) * 60_000;
+  const started = Date.now();
+  let updates = [];
+  console.log(`Дежурю до ${Math.round(budgetMs / 60000)} минут.`);
+
+  while (true) {
+    const left = budgetMs - (Date.now() - started);
+    if (left < 8000) { console.log('Смена окончена, сообщений не было.'); return; }
+    updates = await waitForUpdates(nextOffset, Math.min(25, Math.floor(left / 1000) - 3));
+    if (updates.length) break;
+  }
+
+  console.log(`Сообщений получено: ${updates.length} через ${Math.round((Date.now() - started) / 1000)} с.`);
 
   for (const u of updates) {
     nextOffset = Math.max(nextOffset, u.update_id + 1);
