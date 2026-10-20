@@ -291,6 +291,7 @@
       <button class="btn" id="unhideBtn">Вернуть скрытые</button>
     </div>
     <div class="msg" id="syncMsg"></div>
+    <p class="hint">Пока вы вошли, в ленте справа сверху видна кнопка ✕ — ею убирают неработающее видео, не заходя сюда. Через 15 минут она спрячется сама, и дочка её не увидит.</p>
 
     <h3>Сохранить для дочки</h3>
     <div class="row">
@@ -515,6 +516,24 @@
   let observer;
   let current = 0; // какой ролик сейчас на экране — нужен кнопке «убрать»
 
+  // Кнопка «убрать» открыта только после входа по PIN и ненадолго:
+  // держим срок в памяти, поэтому перезапуск приложения тоже запирает.
+  const UNLOCK_MS = 15 * 60 * 1000;
+  let unlockedUntil = 0;
+  let lockTimer;
+  const isUnlocked = () => Date.now() < unlockedUntil;
+
+  function syncDrop() {
+    document.getElementById('drop').hidden = !videos.length || !isUnlocked();
+  }
+
+  function unlock() {
+    unlockedUntil = Date.now() + UNLOCK_MS;
+    clearTimeout(lockTimer);
+    lockTimer = setTimeout(() => { unlockedUntil = 0; syncDrop(); }, UNLOCK_MS);
+    syncDrop();
+  }
+
   function makePlayer(v) {
     const f = document.createElement('iframe');
     f.src = embedUrl(v);
@@ -553,7 +572,7 @@
     observer?.disconnect();
     feed.innerHTML = '';
     empty.style.display = videos.length ? 'none' : 'flex';
-    document.getElementById('drop').hidden = !videos.length;
+    syncDrop();
     if (!videos.length) { current = 0; return; }
     current = Math.min(Math.max(current, 0), videos.length - 1);
 
@@ -605,6 +624,7 @@
   }
 
   document.getElementById('drop').addEventListener('click', async () => {
+    if (!isUnlocked()) { syncDrop(); return; }
     const v = videos[current];
     if (!v) return;
     if (!confirm('Убрать это видео из ленты?')) return;
@@ -683,6 +703,7 @@
     if (!/^\d{4,}$/.test(val)) { pinMsg.textContent = 'Минимум 4 цифры'; return; }
     if (!saved) storage.set(KEY_PIN, val);
     else if (val !== saved) { pinMsg.textContent = 'Неверный PIN'; pinInput.value = ''; return; }
+    unlock(); // заодно показываем ✕ в ленте — но ненадолго
     close('pin');
     openParent();
   }
