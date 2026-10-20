@@ -1,6 +1,9 @@
-name: Телеграм-бот
+﻿name: Телеграм-бот
 
 on:
+  # GitHub сильно душит расписание: '*/5' на деле срабатывает раз в
+  # несколько часов. Поэтому расписание тут — не способ опрашивать,
+  # а способ поставить в очередь следующую смену.
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
@@ -16,9 +19,9 @@ jobs:
   poll:
     if: github.repository == 'armarzak/kids-reels'
     runs-on: ubuntu-latest
-    # Смена чуть длиннее срока дежурства: если задание зависнет,
-    # оно не займёт очередь на шесть часов.
-    timeout-minutes: 55
+    # Потолок GitHub — 6 часов на задание. Берём почти всё: длинная
+    # смена единственный способ быть на линии постоянно.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,5 +38,5 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ALLOWED_IDS: ${{ vars.TELEGRAM_ALLOWED_IDS }}
-          POLL_MINUTES: '50'
+          POLL_MINUTES: '345'
         run: node scripts/telegram-bot.mjs
