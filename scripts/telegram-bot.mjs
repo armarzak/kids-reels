@@ -14,13 +14,17 @@ if (!TOKEN) {
   process.exit(0);
 }
 
-// Кому можно командовать ботом. Пусто — бот только подсказывает ID.
-const ALLOWED = (process.env.TELEGRAM_ALLOWED_IDS || '')
+// Хозяева: задаются переменной репозитория и могут раздавать доступ.
+// Пусто — бот никого не слушает и только подсказывает ID.
+const OWNERS = (process.env.TELEGRAM_ALLOWED_IDS || '')
   .split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
 
 const VIDEOS = 'videos.json';
 const SETTINGS = 'settings.json';
 const STATE = '.github/bot-state.json';
+// Кого хозяева впустили командой /allow — лежит в репозитории, чтобы
+// добавлять жену или бабушку, не трогая настройки GitHub.
+const ALLOWLIST = '.github/bot-allowed.json';
 const API = `https://api.telegram.org/bot${TOKEN}`;
 
 // Тот же разбор ссылок, что и в приложении.
@@ -92,7 +96,7 @@ function commitAndPush(message) {
   if (!git('status', '--porcelain')) return false;
   git('config', 'user.name', 'kids-reels bot');
   git('config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com');
-  git('add', VIDEOS, SETTINGS, STATE);
+  git('add', VIDEOS, SETTINGS, STATE, ALLOWLIST);
   git('commit', '-m', message);
 
   // Пока шла смена, в ветку могли закоммитить руками — подбираем и пробуем снова.
@@ -118,6 +122,13 @@ const HELP = [
   '/crop <срез сверху> <высота> — подгонка кадра со всех телефонов'
 ].join('\n');
 
+const HELP_OWNER = HELP + '\n\n' + [
+  'Только для вас:',
+  '/who — кто имеет доступ',
+  '/allow <ID> — впустить человека',
+  '/deny <ID> — закрыть доступ'
+].join('\n');
+
 async function main() {
   // Кому принадлежит токен и не перехвачен ли опрос вебхуком —
   // без этого «сообщений нет» не отличить от «пишете не туда».
@@ -130,7 +141,14 @@ async function main() {
   let videos = await readJson(VIDEOS, []);
   if (!Array.isArray(videos)) videos = [];
   let settings = await readJson(SETTINGS, { head: 56, ar: 1.23 });
+  const allowFile = await readJson(ALLOWLIST, { ids: [] });
+  let guests = new Set((allowFile.ids || []).map(String));
   let offset = state.offset || 0;
+
+  const isOwner = chat => OWNERS.includes(chat);
+  const mayUse = chat => isOwner(chat) || guests.has(chat);
+  const tellOwners = text => Promise.all(OWNERS.map(o => say(o, text)));
+  const announced = new Set(); // о каждом незнакомце пишем один раз за смену
 
   const budgetMs = Math.max(1, Number(process.env.POLL_MINUTES) || 50) * 60_000;
   const started = Date.now();
@@ -139,9 +157,11 @@ async function main() {
   async function handle(msg) {
     const chat = String(msg.chat.id);
     const text = msg.text.trim();
+    const who = [msg.chat.first_name, msg.chat.last_name].filter(Boolean).join(' ')
+      || (msg.chat.username ? '@' + msg.chat.username : 'без имени');
 
-    if (!ALLOWED.length) {
-      console.log(`Белый список пуст. Chat ID этого сообщения: ${chat}`);
+    if (!OWNERS.length) {
+      console.log(`Хозяин не назначен. Chat ID этого сообщения: ${chat}`);
       await say(chat, [
         'Бот ещё не настроен.',
         `Ваш ID: ${chat}`,
@@ -151,12 +171,52 @@ async function main() {
       ].join('\n'));
       return;
     }
-    if (!ALLOWED.includes(chat)) {
-      console.log(`Чужой чат ${chat} — молча пропускаю.`);
+
+    if (!mayUse(chat)) {
+      console.log(`Чужой чат ${chat} (${who}) — не пускаю.`);
+      if (!announced.has(chat)) {
+        announced.add(chat);
+        await tellOwners([
+          'Вам пишет незнакомый человек.',
+          `Имя: ${who}`,
+          `ID: ${chat}`,
+          '',
+          `Впустить: /allow ${chat}`
+        ].join('\n'));
+      }
       return;
     }
 
-    if (/^\/(start|help)\b/i.test(text)) { await say(chat, HELP); return; }
+    if (/^\/(start|help)\b/i.test(text)) { await say(chat, isOwner(chat) ? HELP_OWNER : HELP); return; }
+
+    if (/^\/who\b/i.test(text)) {
+      if (!isOwner(chat)) { await say(chat, 'Это умеет только хозяин бота.'); return; }
+      await say(chat, [
+        `Хозяева: ${OWNERS.join(', ')}`,
+        guests.size ? `Впущены: ${[...guests].join(', ')}` : 'Больше никого не впущено.'
+      ].join('\n'));
+      return;
+    }
+
+    const access = text.match(/^\/(allow|deny)\b\s*(\S+)?/i);
+    if (access) {
+      const what = access[1].toLowerCase();
+      if (!isOwner(chat)) { await say(chat, 'Это умеет только хозяин бота.'); return; }
+      const id = (access[2] || '').replace(/[^\d-]/g, '');
+      if (!id) { await say(chat, `Напишите так: /${what} 123456789\nID присылаю, когда человек пишет боту впервые.`); return; }
+      if (OWNERS.includes(id)) {
+        await say(chat, what === 'allow' ? 'Этот человек и так хозяин.' : 'Хозяина так не убрать — он задан в настройках репозитория.');
+        return;
+      }
+      if (what === 'allow') {
+        guests.add(id);
+        await say(chat, `Впустил ${id}. Пусть кидает ссылки.`);
+        await say(id, 'Вам открыли доступ к боту. Кидайте сюда ссылки на Reels — добавлю их в ленту.');
+      } else {
+        await say(chat, guests.delete(id) ? `Закрыл доступ ${id}.` : `${id} и так не был впущен.`);
+      }
+      return;
+    }
 
     if (/^\/list\b/i.test(text)) {
       await say(chat, videos.length
@@ -221,9 +281,19 @@ async function main() {
   }
 
   // Что лежит на диске — чтобы не трогать файлы впустую.
-  let onDisk = { videos: JSON.stringify(videos), settings: JSON.stringify(settings), offset };
+  const guestList = () => JSON.stringify({ ids: [...guests] });
+  let onDisk = {
+    videos: JSON.stringify(videos),
+    settings: JSON.stringify(settings),
+    guests: guestList(),
+    offset
+  };
 
   async function persist() {
+    if (guestList() !== onDisk.guests) {
+      await writeFile(ALLOWLIST, JSON.stringify({ ids: [...guests] }, null, 2) + '\n');
+      console.log(`Впущены: ${[...guests].join(', ') || 'никто'}`);
+    }
     if (JSON.stringify(videos) !== onDisk.videos) {
       await writeFile(VIDEOS, JSON.stringify(videos, null, 2) + '\n');
       console.log(`videos.json: ${videos.length}`);
@@ -235,7 +305,12 @@ async function main() {
     if (offset !== onDisk.offset) {
       await writeFile(STATE, JSON.stringify({ offset }, null, 2) + '\n');
     }
-    onDisk = { videos: JSON.stringify(videos), settings: JSON.stringify(settings), offset };
+    onDisk = {
+      videos: JSON.stringify(videos),
+      settings: JSON.stringify(settings),
+      guests: guestList(),
+      offset
+    };
   }
 
   while (true) {
