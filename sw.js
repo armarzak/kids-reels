@@ -1,4 +1,4 @@
-// Сервис-воркер нужен только ради пушей: кэширование намеренно не трогаем,
+// Сервис-воркер для установки PWA и пушей. Кэширование не используем,
 // иначе приложение начнёт показывать устаревшую версию само себе.
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -29,4 +29,11 @@ self.addEventListener('notificationclick', event => {
       return self.clients.openWindow(url);
     })
   );
+});
+
+// Network-only: новые списки и настройки всегда приходят с сервера.
+self.addEventListener('fetch', event => {
+  if (event.request.method === 'GET' && new URL(event.request.url).origin === self.location.origin) {
+    event.respondWith(fetch(event.request));
+  }
 });
