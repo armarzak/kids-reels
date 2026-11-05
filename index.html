@@ -325,6 +325,11 @@
       <div class="msg" id="fitMsg"></div>
     </div>
 
+
+    <h3>Установка приложения</h3>
+    <div class="row"><button class="btn primary" id="installBtn" hidden>Установить приложение</button></div>
+    <p class="hint" id="installHint">Android: откройте сайт в Chrome → ⋮ → «Добавить на главный экран» → «Установить». На iPhone: Safari → «Поделиться» → «На экран Домой».</p>
+
     <h3>Уведомления</h3>
     <div class="row">
       <button class="btn primary" id="pushBtn">Включить на этом телефоне</button>
@@ -983,6 +988,45 @@
     storage.remove(KEY_PIN);
     close('parent');
   });
+
+
+  // ---------- Установка PWA ----------
+  const installBtn = document.getElementById('installBtn');
+  const installHint = document.getElementById('installHint');
+  let installPrompt = null;
+  function syncInstall() {
+    const installed = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+    installBtn.hidden = installed || !installPrompt;
+    if (installed) installHint.textContent = 'Приложение уже открыто с главного экрана.';
+  }
+  window.addEventListener('beforeinstallprompt', event => {
+    event.preventDefault();
+    installPrompt = event;
+    syncInstall();
+  });
+  installBtn.addEventListener('click', async () => {
+    const prompt = installPrompt;
+    if (!prompt) return;
+    installPrompt = null;
+    installBtn.hidden = true;
+    try {
+      await prompt.prompt();
+      const choice = await prompt.userChoice;
+      if (choice.outcome === 'accepted') installHint.textContent = 'Установка началась — найдите приложение на главном экране.';
+    } catch {
+      installHint.textContent = 'Откройте меню Chrome ⋮ → «Добавить на главный экран» → «Установить».';
+    }
+  });
+  window.addEventListener('appinstalled', () => {
+    installPrompt = null;
+    installBtn.hidden = true;
+    installHint.textContent = 'Приложение установлено — откройте его с главного экрана.';
+  });
+  syncInstall();
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' })
+      .catch(error => console.warn('Service worker registration failed:', error));
+  }
 
   // ---------- Старт ----------
   pruneLocal();
