@@ -772,7 +772,8 @@
         ${mine ? `
         <button title="Выше" data-a="up" ${i === 0 ? 'disabled' : ''}>↑</button>
         <button title="Ниже" data-a="down" ${i === local.length - 1 ? 'disabled' : ''}>↓</button>
-        <button title="Удалить" class="del" data-a="del">✕</button>` : ''}`;
+        ` : ''}
+        <button title="${mine ? 'Удалить' : 'Убрать на этом устройстве'}" class="del" data-a="del">✕</button>`;
       li.addEventListener('click', e => {
         const a = e.target.closest('button')?.dataset.a;
         if (!a) return;
@@ -785,7 +786,8 @@
         if (a === 'down' && i < local.length - 1) [local[i + 1], local[i]] = [local[i], local[i + 1]];
         if (a === 'del') {
           if (!confirm('Удалить это видео?')) return;
-          local.splice(i, 1);
+          if (mine) local.splice(i, 1);
+          else { hidden.add(v.code); saveHidden(); }
         }
         saveLocal(); rebuild(); renderList(); renderFeed();
       });
